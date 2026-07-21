@@ -16,7 +16,7 @@ OUTPUT_VIDEO = INPUT_DIR / "result.mp4"
 FPS = 15
 
 LOW_PERCENTILE = 1.0
-HIGH_PERCENTILE = 99.0
+HIGH_PERCENTILE = 99.8
 
 # 0.5이면 가로·세로 절반, 전체 픽셀 수는 1/4
 OUTPUT_SCALE = 0.2
