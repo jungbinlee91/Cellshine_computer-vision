@@ -1,12 +1,13 @@
-from pathlib import Path
 import os
+from pathlib import Path
+
 import cv2
 import imageio.v2 as imageio
 import numpy as np
 import tifffile
-from tqdm import tqdm
-from pygifsicle import optimize
 from PIL import Image
+from pygifsicle import optimize
+from tqdm import tqdm
 
 # ==============================
 # 사용자 설정
@@ -167,7 +168,7 @@ def main() -> None:
                         f"{file_path.name}, shape={image16.shape}"
                     )
 
-            elif IMAGE_MODE == "color":
+            elif IMAGE_MODE == "color":  # noqa: SIM102
                 if image16.ndim != 3 or image16.shape[2] not in (3, 4):
                     raise ValueError(
                         f"컬러 모드에서는 RGB 또는 RGBA TIFF만 지원합니다: "
