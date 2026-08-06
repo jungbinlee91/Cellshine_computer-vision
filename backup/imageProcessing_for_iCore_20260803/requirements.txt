@@ -1,0 +1,7 @@
+# CS_IMAGING 실행 의존성
+# 개발 검증 환경: Python 3.14.4 (Windows 11 x64)
+# 다른 컴퓨터에서는: python -m pip install -r requirements.txt
+
+PyQt6==6.11.0
+opencv-python==4.13.0
+numpy==2.4.4

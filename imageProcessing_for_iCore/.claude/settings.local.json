@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile mainViewer.py)",
+      "Bash(python -c \"import ast,sys; t=ast.parse\\(open\\('mainViewer.py',encoding='utf-8'\\).read\\(\\)\\); print\\('AST_OK'\\)\")",
+      "Bash(python -m py_compile mainViewer.py liveOptimizer.py)",
+      "Bash(python _smoke_test.py)",
+      "Bash(del _smoke_test.py)",
+      "Bash(python -c ' *)",
+      "Bash(python _import_test.py)",
+      "Bash(python -m py_compile mainViewer.py imageProc.py detectingGC.py liveOptimizer.py)",
+      "Bash(python _smoke.py)",
+      "Bash(python -c \"import sys; print\\('Python:', sys.version\\); import cv2; print\\('opencv-python:', cv2.__version__\\); import numpy; print\\('numpy:', numpy.__version__\\); import PyQt6.QtCore; print\\('PyQt6.QtCore.PYQT_VERSION_STR:', PyQt6.QtCore.PYQT_VERSION_STR\\); print\\('Qt:', PyQt6.QtCore.QT_VERSION_STR\\)\")"
+    ]
+  }
+}
