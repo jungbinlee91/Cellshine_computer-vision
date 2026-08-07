@@ -3,7 +3,6 @@ import time
 import cv2
 import numpy as np
 
-
 # DETECTING 오버레이 두께/폰트
 MARKER_THICKNESS = 3
 ROI_THICKNESS = 5

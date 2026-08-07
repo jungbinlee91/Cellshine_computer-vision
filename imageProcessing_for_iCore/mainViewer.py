@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QDoubleSpinBox,
+    QSpinBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -65,10 +66,8 @@ from detectingGC import (
     ROI_THICKNESS,
     GobletDetector,
 )
-from detectingGC_auto import GobletDetector_Auto
 
 from imageProc import ImageProcessor
-from imageProc_auto import ImageProcessor_Auto
 from liveOptimizer import LiveOptimizer, detect_valid_bits
 
 
@@ -239,7 +238,6 @@ class GobletAnalyzerUI(QMainWindow):
         self.setStyleSheet(DARK_QSS)
 
         self.detector = GobletDetector()
-        self.detector_auto = GobletDetector_Auto()
         self.live_opt = LiveOptimizer(step=10)
 
         self.raw_image = None           # 원본 (uint8 or uint16, 2D)
@@ -310,23 +308,25 @@ class GobletAnalyzerUI(QMainWindow):
         gp.setHorizontalSpacing(6)
         gp.setVerticalSpacing(4)
 
-        self.in_blur   = self._add_double(gp, 0, "Gaussian Blur",  5.0,  0.0, 50.0, 0.1)
-        self.in_p_low  = self._add_double(gp, 1, "Low Stretch %",  1.0,  0.0, 100.0, 0.1)
-        self.in_p_high = self._add_double(gp, 2, "High Stretch %", 99.9, 0.0, 100.0, 0.1)
-        self.in_clahe  = self._add_double(gp, 3, "CLAHE Limit",    25.0, 0.0, 100.0, 0.1)
+        self.in_denoise_sigma   = self._add_double(gp, 0, "Denoise Sigma",  3.0,  0.1, 10.0, 0.1)
+        self.in_local_sigma  = self._add_double(gp, 1, "Local Sigma",  100.0,  20.0, 300.0, 1.0)
+        self.in_noise_floor = self._add_double(gp, 2, "Noise Floor", 5.0, 1.0, 30.0, 0.5)
+        self.in_output_low  = self._add_double(gp, 3, "Output Low",    -2.0, -5.0, 0.0, 0.1)
+        self.in_output_high  = self._add_double(gp, 4, "Output High",    5.0, 1.0, 10.0, 0.1)
+        self.in_clahe_clip_limit  = self._add_double(gp, 5, "Clahe Clip Limit",    1.5, 0.5, 5.0, 0.1)
 
         h_pr = QHBoxLayout()
         self.btn_proc_reset = QPushButton("Reset")
-        self.btn_proc_auto = QPushButton("AUTO")
+        # self.btn_proc_auto = QPushButton("AUTO")
         self.btn_proc_apply = QPushButton("APPLY")
         self.btn_proc_reset.clicked.connect(self.reset_processing_defaults)
         # AUTO 알고리즘 구현 전까지 APPLY와 동일한 동작을 수행합니다.
-        self.btn_proc_auto.clicked.connect(self.run_processing_auto)
+        # self.btn_proc_auto.clicked.connect(self.run_processing_auto)
         self.btn_proc_apply.clicked.connect(self.run_processing)
         h_pr.addWidget(self.btn_proc_reset)
-        h_pr.addWidget(self.btn_proc_auto)
+        # h_pr.addWidget(self.btn_proc_auto)
         h_pr.addWidget(self.btn_proc_apply)
-        gp.addLayout(h_pr, 4, 0, 1, 2)
+        gp.addLayout(h_pr, 6, 0, 1, 2)
         v.addWidget(g_proc)
 
         # ---------- DETECTING group ----------
@@ -340,26 +340,28 @@ class GobletAnalyzerUI(QMainWindow):
         self.chk_marker.stateChanged.connect(self.refresh_display)
         gd.addWidget(self.chk_marker, 0, 0, 1, 2)
 
-        self.in_contrast = self._add_double(gd, 1, "Contrast Th",    5.0,  0.0, 100.0, 0.1)
-        self.in_min_s    = self._add_double(gd, 2, "Min Size (%)",   0.3,  0.0, 100.0, 0.1)
-        self.in_max_s    = self._add_double(gd, 3, "Max Size (%)",   1.0,  0.0, 100.0, 0.1)
-        self.in_block    = self._add_double(gd, 4, "Block Size (%)", 1.0,  0.1, 100.0, 0.1)
-        self.in_adaptive = self._add_double(gd, 5, "Adaptive C",     0.5, -50.0, 50.0, 0.1)
-        self.in_sens     = self._add_double(gd, 6, "Sensitivity",    45.0, 0.0, 100.0, 0.5)
-        self.in_circ     = self._add_double(gd, 7, "Circularity",    20.0, 0.0, 100.0, 0.5)
+        self.in_MinDiameter                  = self._add_int(gd, 1, "MinDiameter",    20,  1, 100, 1)
+        self.in_MaxDiameter                  = self._add_int(gd, 2, "MaxDiameter",   30,  5, 200, 1)
+        self.in_Sensitivity                  = self._add_int(gd, 3, "Sensitivity",   60,  0, 100, 1)
+        self.in_CenterRingContrast           = self._add_double(gd, 4, "CenterRingContrast", 0.3,  0.0, 3.0, 0.01)
+        self.in_NumScales                    = self._add_int(gd, 5, "NumScales",     6, 3, 12, 1)
+        self.in_PeakDistanceRatio            = self._add_double(gd, 6, "PeakDistanceRatio",    0.55, 0.20, 1.0, 0.05)
+        self.in_AbsThreshold                 = self._add_int(gd, 7, "AbsThreshold",    140, 0, 255, 1)
+        self.in_BrightRescueIntensity        = self._add_int(gd, 8, "BrightRescueIntensity",    170, 0, 255, 1)
+        self.in_BrightRescueResponseRatio    = self._add_double(gd, 9, "BrightRescueResponseRatio",    0.65, 0.5, 1.0, 0.01)
 
         h_det = QHBoxLayout()
         self.btn_det_reset = QPushButton("Reset")
-        self.btn_det_auto = QPushButton("AUTO")
+        # self.btn_det_auto = QPushButton("AUTO")
         self.btn_det_apply = QPushButton("APPLY")
         self.btn_det_reset.clicked.connect(self.reset_detecting_defaults)
         # AUTO 알고리즘 구현 전까지 APPLY와 동일한 동작을 수행합니다.
-        self.btn_det_auto.clicked.connect(self.run_detecting_auto)
+        # self.btn_det_auto.clicked.connect(self.run_detecting_auto)
         self.btn_det_apply.clicked.connect(self.run_detecting)
         h_det.addWidget(self.btn_det_reset)
-        h_det.addWidget(self.btn_det_auto)
+        # h_det.addWidget(self.btn_det_auto)
         h_det.addWidget(self.btn_det_apply)
-        gd.addLayout(h_det, 8, 0, 1, 2)
+        gd.addLayout(h_det, 10, 0, 1, 2)
         v.addWidget(g_det)
 
         # ---------- ROI group ----------
@@ -427,24 +429,38 @@ class GobletAnalyzerUI(QMainWindow):
         grid.addWidget(sb, row, 1, alignment=Qt.AlignmentFlag.AlignRight)
         return sb
 
+    def _add_int(self, grid, row, label, default, mn, mx, step=1):
+        grid.addWidget(QLabel(label), row, 0)
+        sb = QSpinBox()
+        sb.setRange(mn, mx)
+        sb.setSingleStep(step)
+        sb.setValue(default)
+        sb.setFixedWidth(95)
+        grid.addWidget(sb, row, 1, alignment=Qt.AlignmentFlag.AlignRight)
+        return sb
+
     # --------------------------------------------------------
     # Reset helpers
     # --------------------------------------------------------
     def reset_processing_defaults(self):
-        self.in_blur.setValue(5.0)
-        self.in_p_low.setValue(1.0)
-        self.in_p_high.setValue(99.9)
-        self.in_clahe.setValue(25.0)
+        self.in_denoise_sigma.setValue(3.0)
+        self.in_local_sigma.setValue(100.0)
+        self.in_noise_floor.setValue(5.0)
+        self.in_output_low.setValue(-2.0)
+        self.in_output_high.setValue(5.0)
+        self.in_clahe_clip_limit.setValue(1.5)
         self.run_processing()
 
     def reset_detecting_defaults(self):
-        self.in_contrast.setValue(5.0)
-        self.in_min_s.setValue(0.3)
-        self.in_max_s.setValue(1.0)
-        self.in_block.setValue(1.0)
-        self.in_adaptive.setValue(0.5)
-        self.in_sens.setValue(45.0)
-        self.in_circ.setValue(20.0)
+        self.in_MinDiameter.setValue(20)
+        self.in_MaxDiameter.setValue(30)
+        self.in_Sensitivity.setValue(60)
+        self.in_CenterRingContrast.setValue(0.3)
+        self.in_NumScales.setValue(6)
+        self.in_PeakDistanceRatio.setValue(0.55)
+        self.in_AbsThreshold.setValue(140)
+        self.in_BrightRescueIntensity.setValue(170)
+        self.in_BrightRescueResponseRatio.setValue(0.65)
         self.run_detecting()
 
     # --------------------------------------------------------
@@ -471,8 +487,8 @@ class GobletAnalyzerUI(QMainWindow):
         )
         # 4개 패널 자동 갱신
         self.run_live()
-        self.run_processing_auto()
-        self.run_detecting_auto()
+        self.run_processing()
+        self.run_detecting()
 
     @staticmethod
     def _build_raw_display(img, valid_bits):
@@ -513,26 +529,20 @@ class GobletAnalyzerUI(QMainWindow):
         if self.raw_image is None:
             return
         t0 = time.time()
-        self.res_normal = ImageProcessor.apply_enhancement(
-            self.raw_image,
-            float(self.in_p_low.value()), float(self.in_p_high.value()),
-            float(self.in_blur.value()), float(self.in_clahe.value()),
+        params = {
+                    "denoise_sigma": float(self.in_denoise_sigma.value()),
+                    "local_sigma": float(self.in_local_sigma.value()),
+                    "noise_floor": float(self.in_noise_floor.value()),
+                    "output_low": float(self.in_output_low.value()),
+                    "output_high": float(self.in_output_high.value()),
+                    "clahe_clip_limit": float(self.in_clahe_clip_limit.value()),
+                }
+        self.res_normal = ImageProcessor.apply_adaptive_enhancement(
+            self.raw_image,params,
         )
         self.elapsed_proc_ms = (time.time() - t0) * 1000.0
         # PROCESSING 결과가 바뀌었으므로 검출 재실행
-        self.run_detecting_auto()
-
-    def run_processing_auto(self):
-            """PROCESSING 패널: Blur + 퍼센타일 스트레칭 + CLAHE. 이어서 DETECTING 재계산."""
-            if self.raw_image is None:
-                return
-            t0 = time.time()
-            self.res_normal = ImageProcessor_Auto.apply_adaptive_enhancement(
-                self.raw_image,
-                )
-            self.elapsed_proc_ms = (time.time() - t0) * 1000.0
-            # PROCESSING 결과가 바뀌었으므로 검출 재실행
-            self.run_detecting_auto()
+        self.run_detecting()
 
     def run_detecting(self):
         """DETECTING 패널: 술잔세포 검출 + 오버레이."""
@@ -541,40 +551,27 @@ class GobletAnalyzerUI(QMainWindow):
             return
         rx, ry, rw, rh = self._compute_roi(self.res_normal.shape)
         params = {
-            "Contrast":    float(self.in_contrast.value()),
-            "MinSize":     float(self.in_min_s.value()),
-            "MaxSize":     float(self.in_max_s.value()),
-            "BlockSize":   float(self.in_block.value()),
-            "AdaptiveC":   float(self.in_adaptive.value()),
-            "Sensitivity": float(self.in_sens.value()),
-            "Circularity": float(self.in_circ.value()),
-            "ROI_X": rx, "ROI_Y": ry, "ROI_W": rw, "ROI_H": rh,
+            "ROI_X": rx,
+            "ROI_Y": ry,
+            "ROI_W": rw,
+            "ROI_H": rh,
+
+            "MinDiameter": float(self.in_MinDiameter.value()), # 15
+            "MaxDiameter": float(self.in_MaxDiameter.value()), # 30
+
+            "Sensitivity": float(self.in_Sensitivity.value()), # 60
+
+            "CenterRingContrast": float(self.in_CenterRingContrast.value()), # 0.3
+            "NumScales": float(self.in_NumScales.value()), # 6
+            "PeakDistanceRatio": float(self.in_PeakDistanceRatio.value()), # 0.55
+            "AbsThreshold": float(self.in_AbsThreshold.value()), # 140
+            "BrightRescueIntensity": float(self.in_BrightRescueIntensity.value()), # 170
+            "BrightRescueResponseRatio": float(self.in_BrightRescueResponseRatio.value()), # 0.85
         }
         t0 = time.time()
         self.contours_n, self.count_n, _ = self.detector.detect(self.res_normal, params)
         self.elapsed_det_ms = (time.time() - t0) * 1000.0
         self.refresh_display()
-
-    def run_detecting_auto(self):
-            """DETECTING 패널: 술잔세포 검출 + 오버레이."""
-            if self.res_normal is None:
-                self.run_processing_auto()
-                return
-            rx, ry, rw, rh = self._compute_roi(self.res_normal.shape)
-            params = {
-                "Contrast":    float(self.in_contrast.value()),
-                "MinSize":     float(self.in_min_s.value()),
-                "MaxSize":     float(self.in_max_s.value()),
-                "BlockSize":   float(self.in_block.value()),
-                "AdaptiveC":   float(self.in_adaptive.value()),
-                "Sensitivity": float(self.in_sens.value()),
-                "Circularity": float(self.in_circ.value()),
-                "ROI_X": rx, "ROI_Y": ry, "ROI_W": rw, "ROI_H": rh,
-            }
-            t0 = time.time()
-            self.contours_n, self.count_n, _ = self.detector_auto.detect_auto(self.res_normal, params)
-            self.elapsed_det_ms = (time.time() - t0) * 1000.0
-            self.refresh_display()
 
     # --------------------------------------------------------
     # ROI: (ROI_mm / FOV_mm) * 이미지 픽셀 → 픽셀 ROI 박스

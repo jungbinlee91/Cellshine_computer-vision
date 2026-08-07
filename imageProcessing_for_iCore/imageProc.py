@@ -1,54 +1,209 @@
-"""
-imageProc.py
-------------
-PROCESSING 패널 전용 이미지 강조 알고리즘.
-
-파이프라인 (입력: 8/16-bit grayscale, 출력: 8-bit grayscale):
-
-  1) Gaussian Blur (5×5 커널, σ = blur_sigma)
-     - 고주파 노이즈 억제
-
-  2) 퍼센타일 선형 스트레칭 (p_low% ~ p_high%)
-     - 10×10 서브샘플 히스토그램에서 두 백분위 값을 잘라내
-       해당 구간을 [0, 255] 8-bit 로 선형 매핑
-
-  3) CLAHE (Contrast-Limited Adaptive Histogram Equalization)
-     - 8×8 타일, clipLimit = clip_limit
-     - 국소 콘트라스트 향상으로 술잔세포 가장자리 강조
-"""
-
 import cv2
 import numpy as np
 
 
-def _stretched_8bit(target: np.ndarray, low_p: float, high_p: float) -> np.ndarray:
-    """10x10 서브샘플에서 [low_p, high_p] 백분위 구간을 0..255 로 선형 매핑."""
-    sample = target[::10, ::10]
-    low, high = np.percentile(sample, [low_p, high_p])
-    if high > low:
-        alpha = 255.0 / (high - low)
-        beta = -low * alpha
-        return cv2.convertScaleAbs(target, alpha=alpha, beta=beta)
-    return cv2.normalize(target, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+def local_contrast_normalization(
+    image: np.ndarray,
+    local_sigma: float = 15.0,
+    noise_floor: float = 3.0,
+) -> np.ndarray:
+    """
+    주변 영역의 평균과 표준편차를 이용한 local normalization.
+
+    계산식:
+        local_mean = GaussianBlur(image)
+        local_variance = GaussianBlur(image²) - local_mean²
+        normalized = (image - local_mean) / max(local_std, noise_floor)
+    """
+    # 이미 float32이면 불필요한 복사와 형변환을 하지 않음
+    if image.dtype == np.float32:
+        img = image
+    else:
+        img = image.astype(np.float32)
+
+    # E[x]
+    local_mean = cv2.GaussianBlur(
+        img,
+        (0, 0),
+        sigmaX=local_sigma,
+        sigmaY=local_sigma,
+    )
+
+    # x² 계산용 배열
+    img_sq = np.empty_like(img)
+    np.multiply(img, img, out=img_sq)
+
+    # E[x²]
+    local_mean_sq = cv2.GaussianBlur(
+        img_sq,
+        (0, 0),
+        sigmaX=local_sigma,
+        sigmaY=local_sigma,
+    )
+
+    # img_sq 배열을 local_mean² 저장 공간으로 재사용
+    np.multiply(local_mean, local_mean, out=img_sq)
+
+    # variance = E[x²] - E[x]²
+    # local_mean_sq 배열을 variance 저장 공간으로 재사용
+    np.subtract(
+        local_mean_sq,
+        img_sq,
+        out=local_mean_sq,
+    )
+
+    np.maximum(
+        local_mean_sq,
+        0.0,
+        out=local_mean_sq,
+    )
+
+    # variance 배열을 std 배열로 재사용
+    np.sqrt(
+        local_mean_sq,
+        out=local_mean_sq,
+    )
+
+    # std = max(std, noise_floor)
+    np.maximum(
+        local_mean_sq,
+        noise_floor,
+        out=local_mean_sq,
+    )
+
+    # normalized = img - local_mean
+    normalized = np.empty_like(img)
+
+    np.subtract(
+        img,
+        local_mean,
+        out=normalized,
+    )
+
+    # normalized /= max(local_std, noise_floor)
+    np.divide(
+        normalized,
+        local_mean_sq,
+        out=normalized,
+    )
+
+    return normalized
+
+
+def normalized_to_uint8(
+    normalized: np.ndarray,
+    lower: float = -2.0,
+    upper: float = 5.0,
+) -> np.ndarray:
+    """
+    local z-score 결과의 고정 범위를 0~255로 변환.
+    """
+    if upper <= lower:
+        raise ValueError("upper는 lower보다 커야 합니다.")
+
+    # 새 float 배열 하나만 생성
+    scaled = np.clip(normalized, lower, upper)
+
+    # 이후 계산은 같은 배열을 계속 재사용
+    np.subtract(
+        scaled,
+        lower,
+        out=scaled,
+    )
+
+    np.multiply(
+        scaled,
+        255.0 / (upper - lower),
+        out=scaled,
+    )
+
+    np.rint(
+        scaled,
+        out=scaled,
+    )
+
+    return scaled.astype(np.uint8)
 
 
 class ImageProcessor:
-    @staticmethod
-    def apply_enhancement(
-        image: np.ndarray,
-        p_low: float = 1.0,
-        p_high: float = 99.9,
-        blur_sigma: float = 5.0,
-        clip_limit: float = 25.0,
-    ) -> np.ndarray | None:
-        """Blur → percentile stretch → CLAHE → 8-bit grayscale."""
+    # CLAHE 객체 생성 비용을 줄이기 위한 캐시
+    _clahe = None
+    _clahe_clip_limit = None
+    _clahe_tile_grid_size = (8, 8)
+
+    @classmethod
+    def _get_clahe(
+        cls,
+        clip_limit: float,
+    ):
+        """
+        같은 설정이면 기존 CLAHE 객체를 재사용.
+        """
+        if (
+            cls._clahe is None
+            or cls._clahe_clip_limit != clip_limit
+        ):
+            cls._clahe = cv2.createCLAHE(
+                clipLimit=clip_limit,
+                tileGridSize=cls._clahe_tile_grid_size,
+            )
+            cls._clahe_clip_limit = clip_limit
+
+        return cls._clahe
+
+    @classmethod
+    def apply_adaptive_enhancement(cls,image: np.ndarray | None,params: dict,) -> np.ndarray | None:
+        """
+        영상별 밝기와 국소 배경 변화에 적응하는 전처리.
+
+        1. Gaussian denoising
+        2. Local mean/std normalization
+        3. 고정 z-score 범위로 8-bit 변환
+        4. CLAHE
+        """
+        denoise_sigma = float(params.get("denoise_sigma", 3.0))
+        local_sigma = float(params.get("local_sigma", 100.0))
+        noise_floor = float(params.get("noise_floor", 5.0))
+        output_low = float(params.get("output_low", -2.0))
+        output_high = float(params.get("output_high", 5.0))
+        clahe_clip_limit = float(params.get("clahe_clip_limit", 1.5))
+
         if image is None:
             return None
 
-        img_f = image.astype(np.float32)
-        if blur_sigma > 0:
-            img_f = cv2.GaussianBlur(img_f, (0, 0), sigmaX=blur_sigma)
+        if image.ndim != 2:
+            raise ValueError(
+                "image는 2차원 grayscale 영상이어야 합니다."
+            )
 
-        stretched = _stretched_8bit(img_f, p_low, p_high)
-        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
-        return clahe.apply(stretched)
+        # 입력이 이미 float32이면 불필요한 복사 방지
+        if image.dtype == np.float32:
+            img = image
+        else:
+            img = image.astype(np.float32)
+
+        if denoise_sigma > 0:
+            img = cv2.GaussianBlur(
+                img,
+                (0, 0),
+                sigmaX=denoise_sigma,
+                sigmaY=denoise_sigma,
+            )
+
+        normalized = local_contrast_normalization(
+            img,
+            local_sigma=local_sigma,
+            noise_floor=noise_floor,
+        )
+
+        output = normalized_to_uint8(
+            normalized,
+            lower=output_low,
+            upper=output_high,
+        )
+
+        if clahe_clip_limit > 0:
+            clahe = cls._get_clahe(clahe_clip_limit)
+            output = clahe.apply(output)
+
+        return output
